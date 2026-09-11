@@ -147,12 +147,14 @@ export default function SecondaryBusiness() {
     const tx = txs.find(x => x.id === String(f.get('transaction')));
     if (!tx) { setError('Select a transaction.'); setSaving(false); return; }
     const kind = String(f.get('kind') || 'principal');
+    const amount = Number(f.get('amount')) || 0;
+    if (amount <= 0) { setError('Payment amount must be greater than 0.'); setSaving(false); return; }
     const direction = tx.type === 'Selling' && kind === 'principal' ? 'received' : 'paid';
     const { error: e } = await supabase.rpc('record_financial_payment', {
       p_transaction_id: tx.id,
       p_payment_type: kind,
       p_direction: direction,
-      p_amount: Number(f.get('amount')) || 0,
+      p_amount: amount,
       p_payment_date: String(f.get('date') || today()),
       p_note: String(f.get('note') || ''),
     });
@@ -229,13 +231,17 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
 }
 
 function TransactionModal({ mode, parties, saving, onClose, onSave }: { mode: Mode; parties: Party[]; saving: boolean; onClose: () => void; onSave: (form: HTMLFormElement) => void }) {
-  const [units, setUnits] = useState(''); const [amount, setAmount] = useState('');
+  const [party, setParty] = useState('');
+  const [units, setUnits] = useState('');
+  const [amount, setAmount] = useState('');
   const setU = (v: string) => { setUnits(v); setAmount(v ? String(Number(v) * 165000) : ''); };
   const setA = (v: string) => { setAmount(v); setUnits(v ? String(Number(v) / 165000) : ''); };
   return <Modal title={`New ${mode}`} onClose={onClose}><form className="form" onSubmit={e => { e.preventDefault(); onSave(e.currentTarget); }}>
     <input type="hidden" name="type" value={mode} />
-    <label>Party<select name="party" required defaultValue=""><option value="" disabled>Select party</option>{parties.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}</select></label>
-    <label>Or type new party<input name="partyText" placeholder="Use Party field above or create first" /></label>
+    <label>Party Name<input name="party" list="party-options" value={party} onChange={e => setParty(e.target.value)} placeholder="Select or type party name" autoComplete="off" required /></label>
+    <datalist id="party-options">{parties.map(p => <option key={p.id} value={p.name} />)}</datalist>
+    <label>Phone<input name="phone" placeholder="Optional" /></label>
+    <label>Address<input name="address" placeholder="Optional" /></label>
     <label>Units<input name="units" type="number" step="0.0001" min="0.0001" value={units} onChange={e => setU(e.target.value)} required /></label>
     <label>Amount<input name="amount" type="number" step="0.01" min="0.01" value={amount} onChange={e => setA(e.target.value)} required /></label>
     <label>Rate<input name="rate" type="number" step="0.01" min="0" defaultValue="10" required /></label>
@@ -246,7 +252,7 @@ function TransactionModal({ mode, parties, saving, onClose, onSave }: { mode: Mo
     <label>End Date<input name="end" type="date" /></label>
     {mode === 'Buying' && <label>People’s Money<input name="peopleFund" type="number" step="0.01" min="0" defaultValue="0" placeholder="0" /></label>}
     <label>Note<input name="note" placeholder="Optional note" /></label>
-    <div style={{ gridColumn: '1/-1' }}><div className="calcbox"><div><span>1 Unit</span><strong>৳165,000</strong></div><div><span>Units</span><strong>{unitsFmt(Number(units) || 0)}</strong></div><div><span>Amount</span><strong>৳{money(Number(amount) || 0)}</strong></div><div><span>Basis</span><strong>Monthly / Daily</strong></div><small>Saving uses the secure Supabase financial transaction engine. Selling automatically consumes the oldest available buying lots first.</small></div></div>
+    <div style={{ gridColumn: '1/-1' }}><div className="calcbox"><div><span>1 Unit</span><strong>৳165,000</strong></div><div><span>Units</span><strong>{unitsFmt(Number(units) || 0)}</strong></div><div><span>Amount</span><strong>৳{money(Number(amount) || 0)}</strong></div><div><span>Basis</span><strong>Monthly / Daily</strong></div><small>Party stays selected while Units and Amount are edited. Saving uses the secure Supabase financial transaction engine. Selling automatically consumes the oldest available buying lots first.</small></div></div>
     <div style={{ gridColumn: '1/-1', display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button type="button" className="secondary" onClick={onClose}>Cancel</button><button className="primary" disabled={saving}>{saving ? 'Saving…' : `Save ${mode}`}</button></div>
   </form></Modal>;
 }
