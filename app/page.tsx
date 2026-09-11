@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-type TxType = 'Buying' | 'Selling' | "People's Money" | 'Capital' | 'Expense';
+type TxType = 'Buying' | 'Selling' | "People's Money";
 type Status = 'Paid' | 'Partially Paid' | 'Due Soon' | 'Overdue' | 'Pending';
 type Tx = {
   id: string; type: TxType; party: string; date: string; dueDate: string;
@@ -13,67 +13,114 @@ type AppState = { transactions: Tx[]; payments: Payment[]; capital: number; expe
 
 const UNIT_VALUE = 165000;
 const MULTIPLIER = 150;
-const money = (n: number) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Math.round(n));
+const DIVISOR = 30;
+const STORAGE_KEY = 'vehicle-capital-pro';
+const money = (n: number) => new Intl.NumberFormat('en-BD', { maximumFractionDigits: 0 }).format(Math.round(n));
 const today = () => new Date().toISOString().slice(0, 10);
-const nextMonth = (date: string) => { const d = new Date(date); const day = d.getDate(); d.setMonth(d.getMonth() + 1); if (d.getDate() !== day) d.setDate(0); return d.toISOString().slice(0, 10); };
-const daysBetweenInclusive = (a: string, b: string) => Math.max(1, Math.ceil((new Date(b).getTime() - new Date(a).getTime()) / 86400000) + 1);
-const statusFor = (tx: Tx) => { if (tx.paid >= tx.amount) return 'Paid' as Status; if (tx.paid > 0) return 'Partially Paid' as Status; const diff = Math.ceil((new Date(tx.dueDate).getTime() - Date.now()) / 86400000); if (diff < 0) return 'Overdue'; if (diff <= 4) return 'Due Soon'; return 'Pending'; };
-const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+const parseDate = (s: string) => new Date(`${s}T00:00:00`);
+const inclusiveDays = (a: string, b: string) => Math.max(1, Math.floor((parseDate(b).getTime() - parseDate(a).getTime()) / 86400000) + 1);
+const nextMonth = (date: string) => { const d = parseDate(date); const original = d.getDate(); d.setMonth(d.getMonth() + 1); if (d.getDate() !== original) d.setDate(0); return d.toISOString().slice(0, 10); };
+const principalForUnits = (units: number) => units * UNIT_VALUE;
+const monthlyFor = (units: number, rate: number) => units * MULTIPLIER * rate;
+const dailyFor = (units: number, rate: number) => monthlyFor(units, rate) / DIVISOR;
+const accruedFor = (tx: Tx, end = today()) => dailyFor(tx.units, tx.rate) * inclusiveDays(tx.date, end);
+const statusFor = (tx: Tx): Status => {
+  if (tx.paid >= tx.amount) return 'Paid';
+  if (tx.paid > 0) return 'Partially Paid';
+  const diff = Math.floor((parseDate(tx.dueDate).getTime() - parseDate(today()).getTime()) / 86400000);
+  if (diff < 0) return 'Overdue';
+  if (diff <= 4) return 'Due Soon';
+  return 'Pending';
+};
+const uid = () => crypto.randomUUID();
 
 const seed: AppState = {
-  capital: 10000000, expenses: 185000,
+  capital: 10000000,
+  expenses: 0,
   transactions: [
-    { id: 'b1', type: 'Buying', party: 'Rahim Motors', date: '2026-08-04', dueDate: '2026-09-04', units: 18, rate: 2.4, amount: 712800, paid: 300000, note: 'Fleet acquisition lot A' },
-    { id: 'b2', type: 'Buying', party: 'Siam Transport', date: '2026-08-11', dueDate: '2026-09-11', units: 12, rate: 2.1, amount: 415800, paid: 415800, note: 'Fleet acquisition lot B' },
-    { id: 's1', type: 'Selling', party: 'Delta Logistics', date: '2026-08-18', dueDate: '2026-09-18', units: 10, rate: 3.2, amount: 528000, paid: 180000, note: 'September allocation' },
-    { id: 'p1', type: "People's Money", party: 'Karim Investor', date: '2026-08-01', dueDate: '2026-09-01', units: 8, rate: 2.8, amount: 336000, paid: 168000, note: 'Monthly return' },
-  ], payments: [], audit: ['System initialized', 'Opening capital recorded: ৳10,000,000']
+    { id: 'b1', type: 'Buying', party: 'ABC Traders', date: '2026-09-01', dueDate: '2026-10-01', units: 50, rate: 11, amount: principalForUnits(50), paid: 0, note: 'Buying lot' },
+    { id: 'b2', type: 'Buying', party: 'Rahman Enterprise', date: '2026-09-05', dueDate: '2026-10-05', units: 100, rate: 10, amount: principalForUnits(100), paid: principalForUnits(100), note: 'Buying lot' },
+    { id: 's1', type: 'Selling', party: 'Noman Auto', date: '2026-09-08', dueDate: '2026-10-08', units: 30, rate: 14, amount: principalForUnits(30), paid: principalForUnits(30), note: 'Sale' },
+    { id: 's2', type: 'Selling', party: 'Karim Motors', date: '2026-09-05', dueDate: '2026-10-05', units: 80, rate: 15, amount: principalForUnits(80), paid: 0, note: 'Sale' },
+    { id: 'p1', type: "People's Money", party: 'AL Trading', date: '2026-09-06', dueDate: '2026-10-06', units: 200, rate: 12, amount: principalForUnits(200), paid: 0, note: 'Monthly return obligation' },
+  ],
+  payments: [],
+  audit: ['System initialized', 'Opening capital recorded: ৳10,000,000'],
 };
 
-function load(): AppState { try { const raw = localStorage.getItem('vehicle-capital-pro'); return raw ? JSON.parse(raw) : seed; } catch { return seed; } }
+function loadState(): AppState | null {
+  try { const raw = localStorage.getItem(STORAGE_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
+}
 
 export default function Page() {
-  const [state, setState] = useState<AppState>(seed);
+  const [state, setState] = useState<AppState | null>(null);
   const [active, setActive] = useState('Dashboard');
   const [query, setQuery] = useState('');
   const [modal, setModal] = useState<'tx' | 'payment' | null>(null);
-  const [selectedTx, setSelectedTx] = useState<string>('');
+  const [selectedTx, setSelectedTx] = useState('');
   const [notice, setNotice] = useState('');
 
-  useEffect(() => setState(load()), []);
-  useEffect(() => { localStorage.setItem('vehicle-capital-pro', JSON.stringify(state)); }, [state]);
+  useEffect(() => setState(loadState() ?? seed), []);
+  useEffect(() => { if (state) localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }, [state]);
+
+  if (!state) return <div className="app"><main className="main"><section className="content"><div className="panel"><h2>Loading ledger…</h2></div></section></main></div>;
 
   const rows = state.transactions;
   const buying = rows.filter(x => x.type === 'Buying');
   const selling = rows.filter(x => x.type === 'Selling');
   const people = rows.filter(x => x.type === "People's Money");
-  const totalUnitsBought = buying.reduce((a, x) => a + x.units, 0);
-  const totalUnitsSold = selling.reduce((a, x) => a + x.units, 0);
-  const receivable = selling.reduce((a, x) => a + Math.max(0, x.amount - x.paid), 0);
-  const peoplePayable = people.reduce((a, x) => a + Math.max(0, x.amount - x.paid), 0);
-  const revenue = selling.reduce((a, x) => a + x.amount, 0);
-  const fifoCost = useMemo(() => { let remaining = totalUnitsSold; let cost = 0; for (const lot of [...buying].sort((a,b) => a.date.localeCompare(b.date))) { const take = Math.min(remaining, lot.units); const perUnit = lot.amount / Math.max(1, lot.units); cost += take * perUnit; remaining -= take; if (remaining <= 0) break; } return cost; }, [buying, totalUnitsSold]);
-  const grossProfit = revenue - fifoCost;
-  const netProfit = grossProfit - peoplePayable - state.expenses;
+  const totalBought = buying.reduce((s, x) => s + x.units, 0);
+  const totalSold = selling.reduce((s, x) => s + x.units, 0);
+  const buyingPrincipal = buying.reduce((s, x) => s + x.amount, 0);
+  const revenue = selling.reduce((s, x) => s + x.amount, 0);
+  const receivable = selling.reduce((s, x) => s + Math.max(0, x.amount - x.paid), 0);
+  const peoplePrincipal = people.reduce((s, x) => s + x.amount, 0);
+  const peoplePayable = people.reduce((s, x) => s + Math.max(0, x.amount - x.paid), 0);
+  const accruedPeople = people.reduce((s, x) => s + accruedFor(x), 0);
+  const fifo = useMemo(() => {
+    let remaining = totalSold; let cost = 0;
+    for (const lot of [...buying].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id))) {
+      const take = Math.min(remaining, lot.units); cost += take * UNIT_VALUE; remaining -= take;
+      if (remaining <= 0) break;
+    }
+    return { cost, remaining };
+  }, [buying, totalSold]);
+  const grossProfit = revenue - fifo.cost;
+  const netProfit = grossProfit - accruedPeople - state.expenses;
+  const alerts = rows.filter(x => ['Due Soon', 'Overdue'].includes(statusFor(x)));
   const filtered = rows.filter(x => `${x.party} ${x.type} ${x.note}`.toLowerCase().includes(query.toLowerCase()));
-  const alerts = rows.filter(x => ['Due Soon','Overdue'].includes(statusFor(x)));
 
-  const saveTx = (tx: Tx) => { setState(s => ({ ...s, transactions: [...s.transactions, tx], audit: [`Created ${tx.type}: ${tx.party} — ৳${money(tx.amount)}`, ...s.audit].slice(0,50) })); setModal(null); setNotice('Transaction saved'); };
-  const savePayment = (txId: string, amount: number, date: string, note: string) => { setState(s => ({ ...s, transactions: s.transactions.map(t => t.id === txId ? { ...t, paid: Math.min(t.amount, t.paid + amount) } : t), payments: [...s.payments, { id: uid(), txId, amount, date, note }], audit: [`Payment recorded: ৳${money(amount)}`, ...s.audit].slice(0,50) })); setModal(null); setNotice('Payment recorded'); };
-  const deleteTx = (id: string) => { if (!confirm('Delete this transaction?')) return; setState(s => ({ ...s, transactions: s.transactions.filter(t => t.id !== id), audit: [`Deleted transaction ${id}`, ...s.audit].slice(0,50) })); };
-  const reset = () => { if (confirm('Reset all local business data to the starter dataset?')) setState(seed); };
+  const saveTx = (tx: Tx) => { setState(s => s ? ({ ...s, transactions: [...s.transactions, tx], audit: [`Created ${tx.type}: ${tx.party} — ৳${money(tx.amount)}`, ...s.audit].slice(0, 100) }) : s); setModal(null); setNotice('Transaction saved'); };
+  const savePayment = (txId: string, amount: number, date: string, note: string) => {
+    setState(s => {
+      if (!s) return s;
+      const target = s.transactions.find(t => t.id === txId); if (!target) return s;
+      const nextPaid = Math.min(target.amount, target.paid + amount);
+      return { ...s, transactions: s.transactions.map(t => t.id === txId ? { ...t, paid: nextPaid } : t), payments: [...s.payments, { id: uid(), txId, amount, date, note }], audit: [`Payment recorded: ৳${money(amount)} for ${target.party}`, ...s.audit].slice(0, 100) };
+    });
+    setModal(null); setNotice('Payment recorded');
+  };
+  const deleteTx = (id: string) => { if (!confirm('Delete this transaction?')) return; setState(s => s ? ({ ...s, transactions: s.transactions.filter(t => t.id !== id), payments: s.payments.filter(p => p.txId !== id), audit: [`Deleted transaction ${id}`, ...s.audit].slice(0, 100) }) : s); };
   const exportData = () => { const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `vehicle-capital-backup-${today()}.json`; a.click(); URL.revokeObjectURL(a.href); };
+  const reset = () => { if (confirm('Reset local data to the starter dataset?')) setState(seed); };
 
   return <div className="app">
     <aside className="sidebar">
-      <div className="brand"><div className="mark">VC</div><div><strong>Vehicle Capital Pro</strong><span>Financial control center</span></div></div>
+      <div className="brand"><div className="mark">VC</div><div><strong>Vehicle Capital Pro</strong><span>Units. Capital. Growth.</span></div></div>
       <nav>{['Dashboard','Buying','Selling',"People's Money",'Parties','Capital','Payments','Units','Profit & Loss','Reports','Analytics','Notifications','Settings'].map(n => <button key={n} className={`nav ${active === n ? 'active' : ''}`} onClick={() => setActive(n)}><span>{icon(n)}</span>{n}{n === 'Notifications' && alerts.length > 0 && <b>{alerts.length}</b>}</button>)}</nav>
-      <div className="sidebottom">1 Unit = ৳165,000<br/>Monthly = Units × 150 × Rate<br/>FIFO: oldest buying lots first<br/>Data is stored locally in this browser.</div>
+      <div className="sidebottom">1 Unit = ৳165,000<br/>Multiplier = 150<br/>Daily Divisor = 30<br/><br/>All calculations use exact transaction dates.</div>
     </aside>
     <main className="main">
-      <header className="topbar"><div className="mobile"><button className="quiet" onClick={() => setActive('Dashboard')}>VC</button></div><div className="search">⌕<input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search transactions, parties, notes..."/><kbd>⌘ K</kbd></div><div className="topright"><span className="date">{new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})}</span><button className="bell" onClick={() => setActive('Notifications')}>◔{alerts.length > 0 && <i className="dot"/>}</button><div className="user"><div className="avatar">O</div><div><strong>Owner</strong><span>Private workspace</span></div></div></div></header>
+      <header className="topbar"><div className="mobile"><button className="quiet" onClick={() => setActive('Dashboard')}>VC</button></div><div className="search">⌕<input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search parties, transactions, ID or anything..."/><kbd>Ctrl K</kbd></div><div className="topright"><span className="date">{new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})}</span><button className="bell" onClick={() => setActive('Notifications')}>◔{alerts.length > 0 && <i className="dot"/>}</button><div className="user"><div className="avatar">O</div><div><strong>Owner</strong><span>Business Owner</span></div></div></div></header>
       <section className="content">
-        {active === 'Dashboard' ? <Dashboard state={state} revenue={revenue} grossProfit={grossProfit} netProfit={netProfit} receivable={receivable} peoplePayable={peoplePayable} totalUnitsBought={totalUnitsBought} totalUnitsSold={totalUnitsSold} alerts={alerts} onAdd={() => setModal('tx')} /> : active === 'Profit & Loss' ? <Profit revenue={revenue} fifoCost={fifoCost} grossProfit={grossProfit} peoplePayable={peoplePayable} expenses={state.expenses} netProfit={netProfit} /> : active === 'Units' ? <Units bought={totalUnitsBought} sold={totalUnitsSold} /> : active === 'Payments' ? <Payments rows={rows} payments={state.payments} onAdd={() => { setSelectedTx(rows[0]?.id || ''); setModal('payment'); }} /> : active === 'Notifications' ? <Notifications alerts={alerts} /> : active === 'Parties' ? <Parties rows={rows} /> : active === 'Settings' ? <Settings state={state} onExport={exportData} onReset={reset} /> : <Module active={active} rows={filtered} onAdd={() => setModal('tx')} onDelete={deleteTx} />}
+        {active === 'Dashboard' && <Dashboard capital={state.capital} revenue={revenue} gross={grossProfit} net={netProfit} bought={totalBought} sold={totalSold} buyingPrincipal={buyingPrincipal} peoplePrincipal={peoplePrincipal} receivable={receivable} peoplePayable={accruedPeople} alerts={alerts} rows={rows} onAdd={() => setModal('tx')} />}
+        {active === 'Profit & Loss' && <Profit revenue={revenue} fifo={fifo.cost} gross={grossProfit} people={accruedPeople} expenses={state.expenses} net={netProfit} />}
+        {active === 'Units' && <Units bought={totalBought} sold={totalSold} />}
+        {active === 'Payments' && <Payments rows={rows} payments={state.payments} onAdd={() => { setSelectedTx(rows[0]?.id || ''); setModal('payment'); }} />}
+        {active === 'Notifications' && <Notifications alerts={alerts} />}
+        {active === 'Parties' && <Parties rows={rows} />}
+        {active === 'Settings' && <Settings state={state} onExport={exportData} onReset={reset} />}
+        {!['Dashboard','Profit & Loss','Units','Payments','Notifications','Parties','Settings'].includes(active) && <Module active={active} rows={filtered.filter(x => active === 'Capital' ? true : x.type === active || (active === "People's Money" && x.type === active))} onAdd={() => setModal('tx')} onDelete={deleteTx} />}
       </section>
     </main>
     {modal === 'tx' && <TransactionModal onClose={() => setModal(null)} onSave={saveTx} />}
@@ -83,29 +130,34 @@ export default function Page() {
 }
 
 function icon(n: string) { const m: Record<string,string> = {Dashboard:'⌂',Buying:'↓',Selling:'↑',"People's Money":'◈',Parties:'◎',Capital:'◫',Payments:'৳',Units:'▦','Profit & Loss':'↗',Reports:'▤',Analytics:'◒',Notifications:'◔',Settings:'⚙'}; return m[n] || '•'; }
+function Metric({title,value,sub}:{title:string,value:any,sub:string}) { return <div className="metric"><span>{title}</span><strong>{value}</strong><small>{sub}</small></div>; }
+function Panel({title,children}:{title:string,children:React.ReactNode}) { return <div className="panel"><div className="panelhead"><h2>{title}</h2></div>{children}</div>; }
+function Pay({label,value,tone}:{label:string,value:any,tone:string}) { return <div className="payrow"><span><i className={`status ${tone}`}/>{label}</span><strong>{value}</strong></div>; }
 
-function Dashboard(p: any) { return <><div className="head"><div><p className="eyebrow">OWNER CONTROL CENTER</p><h1>Business position</h1><p>One view of capital, units, obligations and realized profit.</p></div><div className="actions"><button className="secondary" onClick={() => p.onAdd()}>+ New transaction</button><button className="primary" onClick={() => p.onAdd()}>Record activity</button></div></div>
-  <div className="metrics"><Metric title="Total capital" value={`৳${money(p.state.capital)}`} sub="Opening owner capital"/><Metric title="Selling revenue" value={`৳${money(p.revenue)}`} sub="Gross contracted sales"/><Metric title="Gross profit" value={`৳${money(p.grossProfit)}`} sub="After FIFO buying cost"/><Metric title="Net profit" value={`৳${money(p.netProfit)}`} sub="After payable + expenses"/></div>
-  <div className="metrics second"><Metric title="Units bought" value={money(p.totalUnitsBought)} sub="All buying lots"/><Metric title="Units sold" value={money(p.totalUnitsSold)} sub="Consumed FIFO"/><Metric title="Receivable" value={`৳${money(p.receivable)}`} sub="Outstanding from sales"/><Metric title="People payable" value={`৳${money(p.peoplePayable)}`} sub="Outstanding returns"/><Metric title="Alerts" value={p.alerts.length} sub="Due soon / overdue"/></div>
-  <div className="grid3"><Panel title="Capital utilization"><div className="donutwrap"><div className="donut"/><div><strong style={{fontSize:24}}>{Math.min(100,Math.round((p.totalUnitsSold/Math.max(1,p.totalUnitsBought))*100))}%</strong><p style={{color:'var(--muted)',fontSize:10}}>unit turnover</p><div className="progress"><i style={{width:`${Math.min(100,(p.totalUnitsSold/Math.max(1,p.totalUnitsBought))*100)}%`}}/></div></div></div></Panel><Panel title="Payment overview"><Pay label="Receivable" value={`৳${money(p.receivable)}`} tone="green"/><Pay label="People payable" value={`৳${money(p.peoplePayable)}`} tone="amber"/><Pay label="Alerts" value={p.alerts.length} tone="red"/></Panel><Panel title="Business formula"><div className="legendrow"><span className="dotmark owner"/>Unit value<strong>৳165,000</strong></div><div className="legendrow"><span className="dotmark people"/>Multiplier<strong>150</strong></div><div className="legendrow"><span className="dotmark available"/>Daily<strong>Monthly ÷ 30</strong></div></Panel></div>
-  <div className="gridbottom"><Panel title="Buying vs selling"><div className="bars">{[.42,.56,.71,.64,.83,.95].map((v,i)=><div key={i} className={`bar ${i%2?'two':''}`} style={{height:`${v*100}%`}}/>)}</div><div className="chartlabels"><span>Apr</span><span>May</span><span>Jun</span><span>Jul</span><span>Aug</span><span>Sep</span></div></Panel><Panel title="Alerts"><div>{p.alerts.slice(0,5).map((x:any)=><div className="payrow" key={x.id}><span><i className={`status ${statusFor(x)==='Overdue'?'red':'amber'}`}/>{x.party}</span><strong>{statusFor(x)}</strong></div>)}{p.alerts.length===0&&<p style={{color:'var(--muted)',fontSize:11}}>No upcoming alerts.</p>}</div></Panel></div>
-  <div className="panel" style={{marginTop:10}}><div className="panelhead"><h2>Recent transactions</h2><button className="quiet">Live ledger</button></div><TxTable rows={p.state.transactions.slice(-8).reverse()}/></div></> }
-function Metric({title,value,sub}:{title:string,value:any,sub:string}) { return <div className="metric"><span>{title}</span><strong>{value}</strong><small>{sub}</small></div> }
-function Panel({title,children}:{title:string,children:React.ReactNode}) { return <div className="panel"><div className="panelhead"><h2>{title}</h2></div>{children}</div> }
-function Pay({label,value,tone}:{label:string,value:any,tone:string}) { return <div className="payrow"><span><i className={`status ${tone}`}/>{label}</span><strong>{value}</strong></div> }
+function Dashboard(p:any) { return <>
+  <div className="head"><div><p className="eyebrow">OWNER CONTROL CENTER</p><h1>Business position</h1><p>Principal, returns, units and profit — calculated from the ledger.</p></div><button className="primary" onClick={p.onAdd}>+ New transaction</button></div>
+  <div className="metrics"><Metric title="Opening Capital" value={`৳${money(p.capital)}`} sub="Owner capital"/><Metric title="Available Capital" value={`৳${money(Math.max(0,p.capital-p.buyingPrincipal+p.receivable))}`} sub="After principal movement"/><Metric title="Capital Used" value={`৳${money(Math.max(0,p.buyingPrincipal-p.receivable))}`} sub="Current business use"/><Metric title="People's Money" value={`৳${money(p.peoplePrincipal)}`} sub="Principal balance"/></div>
+  <div className="metrics second"><Metric title="Total Buying" value={`৳${money(p.buyingPrincipal)}`} sub={`${p.bought} units`}/><Metric title="Total Selling" value={`৳${money(p.revenue)}`} sub={`${p.sold} units`}/><Metric title="Gross Profit" value={`৳${money(p.gross)}`} sub="Selling − FIFO cost"/><Metric title="Net Profit" value={`৳${money(p.net)}`} sub="After accrued people returns"/><Metric title="Alerts" value={p.alerts.length} sub="Due soon / overdue"/></div>
+  <div className="grid3"><Panel title="Units Overview"><div className="donutwrap"><div className="donut"><strong>{money(p.bought)}</strong><span>Total Bought</span></div><div><Pay label="Bought Units" value={p.bought} tone="green"/><Pay label="Sold Units" value={p.sold} tone="amber"/><Pay label="Available" value={Math.max(0,p.bought-p.sold)} tone="red"/></div></div></Panel><Panel title="Capital Utilization"><div style={{padding:'12px 0'}}><strong>{Math.min(100,Math.round((p.buyingPrincipal/Math.max(1,p.capital))*100))}% Used</strong><div className="progress"><i style={{width:`${Math.min(100,(p.buyingPrincipal/Math.max(1,p.capital))*100)}%`}}/></div><Pay label="Buying principal" value={`৳${money(p.buyingPrincipal)}`} tone="green"/><Pay label="Receivable" value={`৳${money(p.receivable)}`} tone="green"/></div></Panel><Panel title="Payment Overview"><Pay label="Total Receivable" value={`৳${money(p.receivable)}`} tone="green"/><Pay label="People accrued payable" value={`৳${money(p.peoplePayable)}`} tone="amber"/><Pay label="Due / overdue" value={p.alerts.length} tone="red"/></Panel></div>
+  <div className="gridbottom"><Panel title="Buying vs Selling"><div className="bars"><div className="bar" style={{height:`${Math.min(100,p.buyingPrincipal/Math.max(1,p.revenue)*70)}%`}}/><div className="bar two" style={{height:'70%'}}/></div><div className="chartlabels"><span>Buying</span><span>Selling</span></div></Panel><Panel title="Alerts">{p.alerts.slice(0,6).map((x:any)=><div className="payrow" key={x.id}><span>{x.party}</span><strong>{statusFor(x)}</strong></div>)}{!p.alerts.length&&<p>No upcoming alerts.</p>}</Panel></div>
+  <div className="panel" style={{marginTop:10}}><div className="panelhead"><h2>Recent Transactions</h2></div><TxTable rows={p.rows.slice(-8).reverse()}/></div>
+</>; }
 
-function Module({active,rows,onAdd,onDelete}:{active:string,rows:Tx[],onAdd:()=>void,onDelete:(id:string)=>void}) { return <><div className="head"><div><p className="eyebrow">LEDGER MODULE</p><h1>{active}</h1><p>Manage {active.toLowerCase()} with the same unit and payment rules.</p></div><button className="primary" onClick={onAdd}>+ Add {active === 'Capital' ? 'entry' : 'transaction'}</button></div><div className="module"><div className="modulehead"><div><h2>{active} ledger</h2><p>{rows.length} records in the current search.</p></div></div>{rows.length ? <TxTable rows={rows} onDelete={onDelete}/> : <Empty />}</div></> }
-function TxTable({rows,onDelete}:{rows:Tx[],onDelete?:(id:string)=>void}) { return <div className="tablewrap"><table className="table"><thead><tr><th>Date</th><th>Type</th><th>Party</th><th>Units</th><th>Amount</th><th>Paid</th><th>Status</th>{onDelete&&<th/>}</tr></thead><tbody>{rows.map(x=><tr key={x.id}><td>{x.date}</td><td><span className="type">{x.type}</span></td><td><strong>{x.party}</strong><br/><small style={{color:'var(--muted)'}}>{x.note}</small></td><td>{x.units}</td><td>৳{money(x.amount)}</td><td>৳{money(x.paid)}</td><td><span className="badgeStatus">{statusFor(x)}</span></td>{onDelete&&<td><button className="quiet" onClick={() => onDelete(x.id)}>Delete</button></td>}</tr>)}</tbody></table></div> }
-function Empty(){return <div style={{padding:40,textAlign:'center',color:'var(--muted)',fontSize:12}}>No records found.</div>}
+function Module({active,rows,onAdd,onDelete}:{active:string,rows:Tx[],onAdd:()=>void,onDelete:(id:string)=>void}) { return <><div className="head"><div><p className="eyebrow">LEDGER MODULE</p><h1>{active}</h1><p>Principal amount = Units × ৳165,000. Rate drives monthly return.</p></div><button className="primary" onClick={onAdd}>+ Add transaction</button></div><div className="module">{rows.length ? <TxTable rows={rows} onDelete={onDelete}/> : <p>No records.</p>}</div></>; }
+function TxTable({rows,onDelete}:{rows:Tx[],onDelete?:(id:string)=>void}) { return <div className="tablewrap"><table className="table"><thead><tr><th>ID</th><th>Date</th><th>Type</th><th>Party</th><th>Units</th><th>Amount</th><th>Rate</th><th>Monthly</th><th>Daily</th><th>Status</th><th>Action</th></tr></thead><tbody>{rows.map(x=><tr key={x.id}><td>{x.id.slice(0,8)}</td><td>{x.date}</td><td><span className="pill">{x.type}</span></td><td>{x.party}</td><td>{x.units.toFixed(2)}</td><td>৳{money(x.amount)}</td><td>{x.rate}%</td><td>৳{money(monthlyFor(x.units,x.rate))}</td><td>৳{money(dailyFor(x.units,x.rate))}</td><td><span className={`badge ${statusFor(x).replaceAll(' ','-').toLowerCase()}`}>{statusFor(x)}</span></td><td>{onDelete&&<button className="quiet" onClick={()=>onDelete(x.id)}>Delete</button>}</td></tr>)}</tbody></table></div>; }
 
-function TransactionModal({onClose,onSave}:{onClose:()=>void,onSave:(tx:Tx)=>void}) { const [type,setType]=useState<TxType>('Buying'); const [party,setParty]=useState(''); const [date,setDate]=useState(today()); const [due,setDue]=useState(nextMonth(today())); const [units,setUnits]=useState(1); const [rate,setRate]=useState(2.5); const [amount,setAmount]=useState(units*MULTIPLIER*rate); const [note,setNote]=useState(''); const [mode,setMode]=useState<'units'|'amount'>('units'); const changeUnits=(v:number)=>{setUnits(v);setAmount(v*UNIT_VALUE)}; const changeAmount=(v:number)=>{setAmount(v);setUnits(v/UNIT_VALUE)}; const monthly=units*MULTIPLIER*rate; return <Modal title="New transaction" onClose={onClose}><div className="form"><Field label="Transaction type"><select value={type} onChange={e=>setType(e.target.value as TxType)}><option>Buying</option><option>Selling</option><option>People's Money</option><option>Capital</option><option>Expense</option></select></Field><Field label="Party / source"><input value={party} onChange={e=>setParty(e.target.value)} placeholder="e.g. Rahim Motors"/></Field><Field label="Start date"><input type="date" value={date} onChange={e=>{setDate(e.target.value);setDue(nextMonth(e.target.value))}}/></Field><Field label="Due date"><input type="date" value={due} onChange={e=>setDue(e.target.value)}/></Field><Field label="Rate"><input type="number" step="0.01" value={rate} onChange={e=>{const r=Number(e.target.value);setRate(r);setAmount(units*MULTIPLIER*r)}}/><small>Monthly amount = Units × 150 × Rate</small></Field><Field label={mode==='units'?'Units':'Amount'}><input type="number" value={mode==='units'?units:Math.round(amount)} onChange={e=>mode==='units'?changeUnits(Number(e.target.value)):changeAmount(Number(e.target.value))}/><button className="quiet" type="button" onClick={()=>setMode(mode==='units'?'amount':'units')}>Switch to {mode==='units'?'amount':'units'}</button></Field></div><div className="calc"><div><span>Unit value</span><strong>৳{money(UNIT_VALUE)}</strong></div><div><span>Monthly amount</span><strong>৳{money(monthly)}</strong></div><div><span>Daily amount</span><strong>৳{money(monthly/30)}</strong></div></div><div className="field" style={{marginTop:12}}><label>Note</label><input value={note} onChange={e=>setNote(e.target.value)} placeholder="Optional reference"/></div><div className="modalfoot"><button className="secondary" onClick={onClose}>Cancel</button><button className="primary" disabled={!party||amount<=0} onClick={()=>onSave({id:uid(),type,party,date,dueDate:due,units,rate,amount,paid:0,note})}>Save transaction</button></div></Modal> }
-function PaymentModal({rows,selected,onClose,onSave}:{rows:Tx[],selected:string,onClose:()=>void,onSave:(id:string,amount:number,date:string,note:string)=>void}) { const [id,setId]=useState(selected); const [amount,setAmount]=useState(0); const [date,setDate]=useState(today()); const [note,setNote]=useState(''); const tx=rows.find(x=>x.id===id); return <Modal title="Record payment" onClose={onClose}><div className="form"><Field label="Transaction"><select value={id} onChange={e=>setId(e.target.value)}>{rows.map(x=><option key={x.id} value={x.id}>{x.party} — ৳{money(x.amount-x.paid)} outstanding</option>)}</select></Field><Field label="Payment amount"><input type="number" value={amount} onChange={e=>setAmount(Number(e.target.value))}/></Field><Field label="Payment date"><input type="date" value={date} onChange={e=>setDate(e.target.value)}/></Field><Field label="Note"><input value={note} onChange={e=>setNote(e.target.value)} placeholder="Bank / cash reference"/></Field></div>{tx&&<div className="calc"><div><span>Original</span><strong>৳{money(tx.amount)}</strong></div><div><span>Paid</span><strong>৳{money(tx.paid)}</strong></div><div><span>Remaining</span><strong>৳{money(Math.max(0,tx.amount-tx.paid))}</strong></div></div>}<div className="modalfoot"><button className="secondary" onClick={onClose}>Cancel</button><button className="primary" disabled={!id||amount<=0} onClick={()=>onSave(id,amount,date,note)}>Record payment</button></div></Modal> }
-function Modal({title,onClose,children}:{title:string,onClose:()=>void,children:React.ReactNode}){return <div className="modalbg"><div className="modal"><div className="modalhead"><h2>{title}</h2><button className="close" onClick={onClose}>✕</button></div>{children}</div></div>}
-function Field({label,children}:{label:string,children:React.ReactNode}){return <div className="field"><label>{label}</label>{children}</div>}
+function Profit(p:any) { return <><div className="head"><div><p className="eyebrow">FINANCIAL RESULT</p><h1>Profit & Loss</h1><p>FIFO uses the oldest buying units first. People’s Money is accrued using the exact daily formula.</p></div></div><div className="metrics"><Metric title="Revenue" value={`৳${money(p.revenue)}`} sub="Selling principal"/><Metric title="FIFO Cost" value={`৳${money(p.fifo)}`} sub="Oldest lots first"/><Metric title="Gross Profit" value={`৳${money(p.gross)}`} sub="Revenue − FIFO"/><Metric title="People Returns" value={`৳${money(p.people)}`} sub="Accrued obligation"/><Metric title="Net Profit" value={`৳${money(p.net)}`} sub="After returns + expenses"/></div><div className="panel"><h2>Calculation rules</h2><p>Principal = Units × ৳165,000</p><p>Monthly return = Units × 150 × Rate</p><p>Daily return = Monthly return ÷ 30</p><p>Period return = Daily return × inclusive calendar days</p></div></>; }
+function Units(p:any) { const available=Math.max(0,p.bought-p.sold); return <><div className="head"><div><p className="eyebrow">UNIT CONTROL</p><h1>Units</h1></div></div><div className="metrics"><Metric title="Bought" value={p.bought} sub="Total acquired"/><Metric title="Sold" value={p.sold} sub="Total allocated"/><Metric title="Available" value={available} sub="Remaining units"/></div><div className="panel"><h2>Unit conversion</h2><p>1 Unit = ৳165,000</p><p>100 Units = ৳{money(100*UNIT_VALUE)}</p></div></>; }
+function Notifications({alerts}:{alerts:Tx[]}) { return <><div className="head"><div><p className="eyebrow">ALERT CENTER</p><h1>Notifications</h1></div></div><div className="panel">{alerts.length?alerts.map(x=><div className="payrow" key={x.id}><span>{x.party} — due {x.dueDate}</span><strong>{statusFor(x)}</strong></div>):<p>No due-soon or overdue transactions.</p>}</div></>; }
+function Parties({rows}:{rows:Tx[]}) { const names=[...new Set(rows.map(x=>x.party))]; return <><div className="head"><div><p className="eyebrow">PARTY MASTER</p><h1>Parties</h1></div></div><div className="module">{names.map(name=><div className="payrow" key={name}><span>{name}</span><strong>{rows.filter(x=>x.party===name).length} transactions</strong></div>)}</div></>; }
+function Payments({rows,payments,onAdd}:{rows:Tx[],payments:Payment[],onAdd:()=>void}) { return <><div className="head"><div><p className="eyebrow">PAYMENT CENTER</p><h1>Payments</h1></div><button className="primary" onClick={onAdd}>+ Record payment</button></div><div className="module"><TxTable rows={rows}/><div style={{marginTop:18}}><h2>Payment history</h2>{payments.length?payments.slice().reverse().map(p=><div className="payrow" key={p.id}><span>{p.date} — {rows.find(x=>x.id===p.txId)?.party||'Unknown'}</span><strong>৳{money(p.amount)}</strong></div>):<p>No payments recorded.</p>}</div></div></>; }
+function Settings({state,onExport,onReset}:{state:AppState,onExport:()=>void,onReset:()=>void}) { return <><div className="head"><div><p className="eyebrow">SYSTEM</p><h1>Settings</h1></div></div><div className="panel"><h2>Business formulas</h2><p>Unit value: ৳165,000</p><p>Multiplier: 150</p><p>Daily divisor: 30</p><p>Opening capital: ৳{money(state.capital)}</p><button className="secondary" onClick={onExport}>Export backup</button> <button className="quiet" onClick={onReset}>Reset demo data</button></div></>; }
 
-function Payments({rows,payments,onAdd}:{rows:Tx[],payments:Payment[],onAdd:()=>void}){return <><div className="head"><div><p className="eyebrow">CASH MOVEMENT</p><h1>Payments</h1><p>Record receipts and payments against any transaction.</p></div><button className="primary" onClick={onAdd}>+ Record payment</button></div><div className="module"><TxTable rows={rows}/><div style={{marginTop:22}}><h2 style={{fontSize:13}}>Payment history</h2>{payments.length===0?<Empty/>:<table className="table"><thead><tr><th>Date</th><th>Transaction</th><th>Amount</th><th>Note</th></tr></thead><tbody>{payments.map(p=><tr key={p.id}><td>{p.date}</td><td>{rows.find(x=>x.id===p.txId)?.party || 'Deleted transaction'}</td><td>৳{money(p.amount)}</td><td>{p.note}</td></tr>)}</tbody></table>}</div></div></>}
-function Profit(p:any){return <><div className="head"><div><p className="eyebrow">FINANCIAL RESULT</p><h1>Profit & Loss</h1><p>Gross profit follows FIFO consumption of the oldest buying lots.</p></div></div><div className="profit"><div><span>Selling revenue</span><strong>৳{money(p.revenue)}</strong></div><div><span>FIFO buying cost</span><strong>৳{money(p.fifoCost)}</strong></div><div><span>Gross profit</span><strong>৳{money(p.grossProfit)}</strong></div><div><span>People's Money payable</span><strong>৳{money(p.peoplePayable)}</strong></div><div><span>Operating expenses</span><strong>৳{money(p.expenses)}</strong></div><div><span>Net profit</span><strong>৳{money(p.netProfit)}</strong></div></div></>}
-function Units({bought,sold}:{bought:number,sold:number}){return <><div className="head"><div><p className="eyebrow">UNIT CONTROL</p><h1>Units</h1><p>Unit inventory and conversion at the fixed business value.</p></div></div><div className="metrics"><Metric title="Total bought" value={bought} sub={`৳${money(bought*UNIT_VALUE)}`} /><Metric title="Total sold" value={sold} sub={`৳${money(sold*UNIT_VALUE)}`} /><Metric title="Remaining" value={Math.max(0,bought-sold)} sub="Available units" /><Metric title="Unit value" value="৳165,000" sub="Fixed conversion"/></div><div className="module"><h2>Conversion</h2><p>1 Unit = ৳165,000. The app keeps both directions available when creating transactions.</p></div></>}
-function Notifications({alerts}:{alerts:Tx[]}){return <><div className="head"><div><p className="eyebrow">DUE MANAGEMENT</p><h1>Notifications</h1><p>Due Soon is triggered within four calendar days; overdue is triggered after the due date.</p></div></div><div className="module">{alerts.length?<TxTable rows={alerts}/>:<Empty/>}</div></>}
-function Parties({rows}:{rows:Tx[]}){const names=[...new Set(rows.map(x=>x.party))]; return <><div className="head"><div><p className="eyebrow">PARTY MASTER</p><h1>Parties</h1><p>Every transaction automatically creates a searchable party record.</p></div></div><div className="metrics">{names.slice(0,4).map(n=>{const r=rows.filter(x=>x.party===n);return <Metric key={n} title={n} value={`৳${money(r.reduce((a,x)=>a+x.amount,0))}`} sub={`${r.length} transactions`}/>})}</div><div className="module"><TxTable rows={rows}/></div></>}
-function Settings({state,onExport,onReset}:{state:AppState,onExport:()=>void,onReset:()=>void}){return <><div className="head"><div><p className="eyebrow">WORKSPACE</p><h1>Settings</h1><p>Backup and control the private browser workspace.</p></div></div><div className="module"><h2>Business rules</h2><div className="legendrow">Unit value<strong>৳165,000</strong></div><div className="legendrow">Multiplier<strong>150</strong></div><div className="legendrow">Daily calculation<strong>Monthly ÷ 30</strong></div><div className="legendrow">Due alert<strong>4 days before due</strong></div><div style={{display:'flex',gap:8,marginTop:20}}><button className="primary" onClick={onExport}>Export JSON backup</button><button className="secondary" onClick={onReset}>Reset demo data</button></div><p style={{marginTop:18,color:'var(--muted)',fontSize:10}}>Current records: {state.transactions.length}. This Vercel build stores business data in browser local storage; a server database can be attached as the next infrastructure step.</p></div></>}
+function TransactionModal({onClose,onSave}:{onClose:()=>void,onSave:(tx:Tx)=>void}) {
+  const [type,setType]=useState<TxType>('Buying'); const [party,setParty]=useState(''); const [date,setDate]=useState(today()); const [units,setUnits]=useState('1'); const [rate,setRate]=useState('10'); const [paid,setPaid]=useState('0'); const [note,setNote]=useState('');
+  const u=Math.max(0,Number(units)||0); const r=Math.max(0,Number(rate)||0); const amount=principalForUnits(u); const monthly=monthlyFor(u,r); const daily=dailyFor(u,r);
+  const submit=(e:React.FormEvent)=>{e.preventDefault(); if(!party.trim()||u<=0)return; onSave({id:uid(),type,party:party.trim(),date,dueDate:nextMonth(date),units:u,rate:r,amount,paid:Math.min(amount,Math.max(0,Number(paid)||0)),note});};
+  return <div className="modalbg"><form className="modal" onSubmit={submit}><div className="panelhead"><h2>New {type}</h2><button type="button" className="quiet" onClick={onClose}>Close</button></div><div className="form"><label>Type<select value={type} onChange={e=>setType(e.target.value as TxType)}><option>Buying</option><option>Selling</option><option>People's Money</option></select></label><label>Party<input value={party} onChange={e=>setParty(e.target.value)} placeholder="Party name" required/></label><label>Date<input type="date" value={date} onChange={e=>setDate(e.target.value)} required/></label><label>Units<input type="number" min="0.01" step="0.01" value={units} onChange={e=>setUnits(e.target.value)}/></label><label>Rate (%)<input type="number" min="0" step="0.01" value={rate} onChange={e=>setRate(e.target.value)}/></label><label>Initial payment<input type="number" min="0" step="1" value={paid} onChange={e=>setPaid(e.target.value)}/></label><label>Note<input value={note} onChange={e=>setNote(e.target.value)} placeholder="Optional note"/></label></div><div className="calcbox"><div><span>Principal amount</span><strong>৳{money(amount)}</strong></div><div><span>Monthly return</span><strong>৳{money(monthly)}</strong></div><div><span>Daily return</span><strong>৳{money(daily)}</strong></div><small>Principal = Units × ৳165,000 · Monthly = Units × 150 × Rate · Daily = Monthly ÷ 30</small></div><button className="primary" type="submit">Save transaction</button></form></div>;
+}
+
+function PaymentModal({rows,selected,onClose,onSave}:{rows:Tx[],selected:string,onClose:()=>void,onSave:(id:string,amount:number,date:string,note:string)=>void}) { const [txId,setTxId]=useState(selected||rows[0]?.id||''); const [amount,setAmount]=useState(''); const [date,setDate]=useState(today()); const [note,setNote]=useState(''); const tx=rows.find(x=>x.id===txId); return <div className="modalbg"><form className="modal" onSubmit={e=>{e.preventDefault(); const a=Number(amount); if(tx&&a>0)onSave(txId,a,date,note);}}><div className="panelhead"><h2>Record Payment</h2><button type="button" className="quiet" onClick={onClose}>Close</button></div><div className="form"><label>Transaction<select value={txId} onChange={e=>setTxId(e.target.value)}>{rows.map(x=><option key={x.id} value={x.id}>{x.party} — ৳{money(x.amount)}</option>)}</select></label><label>Amount<input type="number" min="1" step="1" value={amount} onChange={e=>setAmount(e.target.value)} required/></label><label>Date<input type="date" value={date} onChange={e=>setDate(e.target.value)} required/></label><label>Note<input value={note} onChange={e=>setNote(e.target.value)}/></label></div>{tx&&<div className="calcbox"><div><span>Principal</span><strong>৳{money(tx.amount)}</strong></div><div><span>Already paid</span><strong>৳{money(tx.paid)}</strong></div><div><span>Remaining</span><strong>৳{money(Math.max(0,tx.amount-tx.paid))}</strong></div></div>}<button className="primary" type="submit">Record payment</button></form></div>; }
