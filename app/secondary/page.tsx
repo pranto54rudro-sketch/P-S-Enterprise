@@ -42,8 +42,10 @@ export default function SecondaryBusiness() {
   const [modal, setModal] = useState<'transaction' | 'party' | 'payment' | null>(null);
   const [mode, setMode] = useState<Mode>('Buying');
 
-  const load = async () => {
-    setLoading(true);
+  // Initial load uses the full loading screen. Subsequent refreshes/realtime updates are silent,
+  // so the current page and open form never disappear while data is being refreshed.
+  const load = async (showLoading = false) => {
+    if (showLoading) setLoading(true);
     setError('');
     const [t, p, l, pm, s] = await Promise.all([
       supabase.from('transactions').select('*,parties(name)').order('transaction_date', { ascending: false }),
@@ -59,16 +61,16 @@ export default function SecondaryBusiness() {
     if (l.data) setLots(l.data.map((x: any) => ({ ...x, units: +x.units, unit_cost: +x.unit_cost, owner_units: +x.owner_units, people_units: +x.people_units })));
     if (pm.data) setPayments(pm.data.map((x: any) => ({ ...x, amount: +x.amount })));
     if (!s.error) setOpening(+s.data.opening_capital);
-    setLoading(false);
+    if (showLoading) setLoading(false);
   };
 
   useEffect(() => {
-    load();
+    load(true);
     const channel = supabase.channel('secondary-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'buying_lots' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'parties' }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => load(false))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'buying_lots' }, () => load(false))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => load(false))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'parties' }, () => load(false))
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, []);
@@ -101,7 +103,7 @@ export default function SecondaryBusiness() {
     if (!party || units <= 0 || amount <= 0) { setError('Party, units and amount are required.'); setSaving(false); return; }
     if (type === 'Buying' && (peopleFund < 0 || peopleFund > amount)) { setError('People’s Money must be between 0 and the total amount.'); setSaving(false); return; }
     const { error: rpcError } = await supabase.rpc('create_financial_transaction', { p_type: type, p_party_name: party, p_party_phone: String(f.get('phone') || ''), p_party_address: String(f.get('address') || ''), p_transaction_date: String(f.get('date') || today()), p_due_date: String(f.get('due') || '') || null, p_units: units, p_rate: Number(f.get('rate')) || 0, p_amount: amount, p_owner_funded: ownerFund, p_people_funded: peopleFund, p_note: String(f.get('note') || ''), p_basis: String(f.get('basis') || 'Monthly'), p_start_date: String(f.get('start') || f.get('date') || today()), p_end_date: String(f.get('end') || '') || null });
-    if (rpcError) setError(rpcError.message); else { setModal(null); setNotice(`${type} saved successfully.`); await load(); }
+    if (rpcError) setError(rpcError.message); else { setModal(null); setNotice(`${type} saved successfully.`); await load(false); }
     setSaving(false);
   };
 
@@ -111,7 +113,7 @@ export default function SecondaryBusiness() {
     const name = String(f.get('name') || '').trim();
     if (!name) { setError('Party name is required.'); setSaving(false); return; }
     const { error: e } = await supabase.from('parties').upsert({ name, phone: String(f.get('phone') || '') || null, address: String(f.get('address') || '') || null }, { onConflict: 'name' });
-    if (e) setError(e.message); else { setModal(null); setNotice('Party saved successfully.'); await load(); }
+    if (e) setError(e.message); else { setModal(null); setNotice('Party saved successfully.'); await load(false); }
     setSaving(false);
   };
 
@@ -125,7 +127,7 @@ export default function SecondaryBusiness() {
     if (amount <= 0) { setError('Payment amount must be greater than 0.'); setSaving(false); return; }
     const direction = tx.type === 'Selling' && kind === 'principal' ? 'received' : 'paid';
     const { error: e } = await supabase.rpc('record_financial_payment', { p_transaction_id: tx.id, p_payment_type: kind, p_direction: direction, p_amount: amount, p_payment_date: String(f.get('date') || today()), p_note: String(f.get('note') || '') });
-    if (e) setError(e.message); else { setModal(null); setNotice('Payment saved successfully.'); await load(); }
+    if (e) setError(e.message); else { setModal(null); setNotice('Payment saved successfully.'); await load(false); }
     setSaving(false);
   };
 
@@ -133,7 +135,7 @@ export default function SecondaryBusiness() {
     if (!confirm('Delete this transaction? Paid transactions cannot be deleted.')) return;
     setError('');
     const { error: e } = await supabase.rpc('delete_financial_transaction', { p_transaction_id: id });
-    if (e) setError(e.message); else { setNotice('Transaction deleted.'); await load(); }
+    if (e) setError(e.message); else { setNotice('Transaction deleted.'); await load(false); }
   };
 
   const nav = ['Dashboard', 'Buying', 'Selling', "People's Money", 'Parties', 'Capital', 'Payments', 'Units', 'Profit & Loss', 'Reports', 'Analytics', 'Notifications', 'Settings'];
@@ -148,7 +150,7 @@ export default function SecondaryBusiness() {
       <div className="sidebottom"><strong>Calculation Engine</strong><br />1 Unit = ৳165,000<br />Monthly = Units × 150 × Rate<br />Daily = Monthly ÷ 30<br />FIFO = oldest buying lot first</div>
     </aside>
     <main className="main">
-      <header className="topbar"><div><strong>A P TRADERS</strong><span style={{ marginLeft: 8, color: 'var(--muted)', fontSize: 10 }}>SECONDARY BUSINESS · LIVE</span></div><div className="topright"><span className="date">{today()}</span><button className="secondary" onClick={load}>Refresh</button></div></header>
+      <header className="topbar"><div><strong>A P TRADERS</strong><span style={{ marginLeft: 8, color: 'var(--muted)', fontSize: 10 }}>SECONDARY BUSINESS · LIVE</span></div><div className="topright"><span className="date">{today()}</span><button className="secondary" onClick={() => load(false)}>Refresh</button></div></header>
       <section className="content">
         <div className="head"><div><p className="eyebrow">SECONDARY BUSINESS</p><h1>{active}</h1><p>Centralized capital, units, buying, selling, People’s Money and profit.</p></div><div className="actions">
           {active === 'Buying' && <button className="primary" onClick={() => { setMode('Buying'); setModal('transaction'); }}>+ New Buying</button>}
@@ -201,8 +203,9 @@ function TransactionModal({ mode, parties, saving, onClose, onSave }: { mode: Mo
   const setA = (v: string) => { setAmount(v); setUnits(v ? String(Number(v) / 165000) : ''); };
   return <Modal title={`New ${mode}`} onClose={onClose}><form className="form" onSubmit={e => { e.preventDefault(); onSave(e.currentTarget); }}>
     <input type="hidden" name="type" value={mode} />
-    <label>Party Name<input name="party" value={party} onChange={e => setParty(e.target.value)} placeholder="Type party name" autoComplete="off" required /></label>
-    <label>Choose Existing Party<select value="" onChange={e => setParty(e.target.value)}><option value="">Select an existing party</option>{parties.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}</select></label>
+    <label>Party Name<input name="party" value={party} onChange={e => setParty(e.target.value)} placeholder="Type or choose a party" list="party-options" autoComplete="off" required /></label>
+    <datalist id="party-options">{parties.map(p => <option key={p.id} value={p.name} />)}</datalist>
+    <div style={{ gridColumn: '1/-1', marginTop: -4, color: 'var(--muted)', fontSize: 12 }}>Type a new party name, or select an existing party from the suggestions. The name stays independent from Units and Amount.</div>
     <label>Phone<input name="phone" placeholder="Optional" /></label>
     <label>Address<input name="address" placeholder="Optional" /></label>
     <label>Units<input name="units" type="number" step="0.0001" min="0.0001" value={units} onChange={e => setU(e.target.value)} required /></label>
@@ -215,7 +218,7 @@ function TransactionModal({ mode, parties, saving, onClose, onSave }: { mode: Mo
     <label>End Date<input name="end" type="date" /></label>
     {mode === 'Buying' && <label>People’s Money<input name="peopleFund" type="number" step="0.01" min="0" defaultValue="0" placeholder="0" /></label>}
     <label>Note<input name="note" placeholder="Optional note" /></label>
-    <div style={{ gridColumn: '1/-1' }}><div className="calcbox"><div><span>1 Unit</span><strong>৳165,000</strong></div><div><span>Units</span><strong>{unitsFmt(Number(units) || 0)}</strong></div><div><span>Amount</span><strong>৳{money(Number(amount) || 0)}</strong></div><div><span>Basis</span><strong>Monthly / Daily</strong></div><small>Party Name is locked to its own state. Units and Amount calculations cannot modify it. Use the existing-party selector only when you want to replace the typed name.</small></div></div>
+    <div style={{ gridColumn: '1/-1' }}><div className="calcbox"><div><span>1 Unit</span><strong>৳165,000</strong></div><div><span>Units</span><strong>{unitsFmt(Number(units) || 0)}</strong></div><div><span>Amount</span><strong>৳{money(Number(amount) || 0)}</strong></div><div><span>Basis</span><strong>Monthly / Daily</strong></div><small>Party Name is controlled independently. Changing Units or Amount will never replace or clear the party name.</small></div></div>
     <div style={{ gridColumn: '1/-1', display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button type="button" className="secondary" onClick={onClose}>Cancel</button><button className="primary" disabled={saving}>{saving ? 'Saving…' : `Save ${mode}`}</button></div>
   </form></Modal>;
 }
