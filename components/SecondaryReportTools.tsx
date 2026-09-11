@@ -1,0 +1,22 @@
+'use client';
+import { useState } from 'react';
+import { createClient } from '@/lib/supabase/client';
+
+const money=(n:number)=>new Intl.NumberFormat('en-BD',{maximumFractionDigits:2}).format(Number(n)||0);
+const now=()=>new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Dhaka',dateStyle:'medium',timeStyle:'short'}).format(new Date());
+
+export default function SecondaryReportTools(){
+ const [open,setOpen]=useState(false); const [busy,setBusy]=useState(false); const [data,setData]=useState<any>(null);
+ const load=async()=>{setBusy(true);const s=createClient();const [k,p]=await Promise.all([s.from('v_business_kpis').select('*').maybeSingle(),s.from('v_people_money_ledger').select('*').order('transaction_date',{ascending:false})]);setData({k:k.data||{},rows:p.data||[]});setBusy(false);setOpen(true)};
+ const pdf=()=>{setOpen(true);setTimeout(()=>window.print(),300)};
+ const k=data?.k||{};
+ return <>
+ <div className="ap-report-tools" style={{position:'fixed',right:18,bottom:18,zIndex:9999,display:'flex',gap:8}}>
+  <button type="button" onClick={load} style={{padding:'10px 14px',border:'1px solid #cbd5e1',borderRadius:8,background:'#fff',fontWeight:700,cursor:'pointer'}}>View Summary</button>
+  <button type="button" onClick={pdf} style={{padding:'10px 14px',border:0,borderRadius:8,background:'#111827',color:'#fff',fontWeight:700,cursor:'pointer'}}>Export PDF</button>
+ </div>
+ {open&&<div className="ap-report-modal" style={{position:'fixed',inset:0,zIndex:9998,background:'rgba(15,23,42,.5)',display:'flex',alignItems:'center',justifyContent:'center',padding:20}}><div style={{background:'#fff',width:'min(960px,100%)',maxHeight:'90vh',overflow:'auto',borderRadius:14,padding:24}}><div style={{display:'flex',justifyContent:'space-between'}}><div><h2 style={{margin:0}}>A P Traders — Business Summary</h2><small>Generated: {now()} (Asia/Dhaka)</small></div><button type="button" onClick={()=>setOpen(false)}>Close</button></div>{busy?<p>Loading summary…</p>:<><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:10,marginTop:18}}>{[['Opening Capital',k.opening_capital],['Owner Capital Used',k.owner_capital_used],['Available Owner Capital',k.available_owner_capital],['Selling Revenue',k.selling_revenue],['Realized Selling Profit',k.realized_selling_profit],['People’s Money Returns Paid',k.returns_paid],['Expenses',k.expenses],['Net Profit',k.net_profit]].map(([a,b])=><div key={String(a)} style={{border:'1px solid #e2e8f0',padding:12,borderRadius:9}}><small>{a}</small><div style={{fontSize:20,fontWeight:800}}>৳{money(Number(b))}</div></div>)}</div><h3>People’s Money / Buying Ledger</h3><table style={{width:'100%',borderCollapse:'collapse'}}><thead><tr>{['Party','Date','Principal','Units','Rate','Paid','Due','Status'].map(x=><th key={x} style={{textAlign:'left',borderBottom:'2px solid #ddd',padding:7}}>{x}</th>)}</tr></thead><tbody>{(data?.rows||[]).map((r:any,i:number)=><tr key={i}>{[r.party||'—',r.transaction_date,`৳${money(r.principal)}`,r.units,r.rate,`৳${money(r.principal_paid)}`,`৳${money(r.principal_due)}`,r.people_money_status].map((x:any,j:number)=><td key={j} style={{padding:7,borderBottom:'1px solid #eee'}}>{x}</td>)}</tr>)}</tbody></table></>}</div></div>}
+ <div className="ap-report-print" style={{display:'none'}}><h1>A P Traders — Business Financial Summary</h1><p>Generated: {now()} (Asia/Dhaka)</p><h2>Profit & Loss / Capital Position</h2><table style={{width:'100%'}}><tbody>{[['Opening Capital',k.opening_capital],['Owner Capital Used',k.owner_capital_used],['Available Owner Capital',k.available_owner_capital],['Selling Revenue',k.selling_revenue],['Realized Selling Profit',k.realized_selling_profit],['People’s Money Returns Paid',k.returns_paid],['Expenses',k.expenses],['Net Profit',k.net_profit]].map(([a,b])=><tr key={String(a)}><td>{a}</td><td>৳{money(Number(b))}</td></tr>)}</tbody></table><h2>People’s Money / Buying Ledger</h2><table style={{width:'100%'}}><tbody>{(data?.rows||[]).map((r:any,i:number)=><tr key={i}><td>{r.party||'—'}</td><td>{r.transaction_date}</td><td>৳{money(r.principal)}</td><td>{r.units}</td><td>{r.people_money_status}</td></tr>)}</tbody></table></div>
+ <style>{`@media print{body *{visibility:hidden!important}.ap-report-print,.ap-report-print *{visibility:visible!important}.ap-report-print{display:block!important;position:absolute!important;left:0;top:0;width:100%;padding:24px;background:#fff;color:#000}.ap-report-tools,.ap-report-modal{display:none!important}}`}</style>
+ </>;
+}
