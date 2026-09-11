@@ -1,0 +1,10 @@
+export const UNIT_VALUE=165000;
+export const MULTIPLIER=150;
+export const DAILY_DIVISOR=30;
+export const unitsFromAmount=(amount:number)=>amount/UNIT_VALUE;
+export const amountFromUnits=(units:number)=>units*UNIT_VALUE;
+export const monthlyReturn=(units:number,rate:number)=>units*MULTIPLIER*rate;
+export const dailyReturn=(units:number,rate:number)=>monthlyReturn(units,rate)/DAILY_DIVISOR;
+export const inclusiveDays=(start:string,end:string)=>Math.max(0,Math.floor((new Date(end+'T00:00:00').getTime()-new Date(start+'T00:00:00').getTime())/86400000)+1);
+export const nextMonth=(start:string)=>{const d=new Date(start+'T00:00:00'),day=d.getDate();d.setMonth(d.getMonth()+1);if(d.getDate()!==day)d.setDate(0);return d.toISOString().slice(0,10)};
+export const returnForPeriod=(units:number,rate:number,start:string,end:string)=>dailyReturn(units,rate)*inclusiveDays(start,end);
