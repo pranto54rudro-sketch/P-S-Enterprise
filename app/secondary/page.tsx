@@ -54,11 +54,7 @@ export default function SecondaryBusiness() {
     ]);
     const firstError = [t, p, l, pm, s].find((x: any) => x.error)?.error;
     if (firstError) setError(firstError.message);
-    if (t.data) setTxs(t.data.map((x: any) => ({
-      ...x, party: x.parties?.name || '—', units: +x.units, rate: +x.rate, amount: +x.amount,
-      paid: +x.paid, owner_funded: +x.owner_funded, people_funded: +x.people_funded,
-      realized_profit: +x.realized_profit, basis: x.basis || 'Monthly',
-    })));
+    if (t.data) setTxs(t.data.map((x: any) => ({ ...x, party: x.parties?.name || '—', units: +x.units, rate: +x.rate, amount: +x.amount, paid: +x.paid, owner_funded: +x.owner_funded, people_funded: +x.people_funded, realized_profit: +x.realized_profit, basis: x.basis || 'Monthly' })));
     if (p.data) setParties(p.data);
     if (l.data) setLots(l.data.map((x: any) => ({ ...x, units: +x.units, unit_cost: +x.unit_cost, owner_units: +x.owner_units, people_units: +x.people_units })));
     if (pm.data) setPayments(pm.data.map((x: any) => ({ ...x, amount: +x.amount })));
@@ -88,7 +84,6 @@ export default function SecondaryBusiness() {
   const ownerUnits = lots.reduce((a, x) => a + x.owner_units, 0);
   const peopleUnits = lots.reduce((a, x) => a + x.people_units, 0);
   const gross = selling.reduce((a, x) => a + x.realized_profit, 0);
-  // People’s Money is stored as a BDT principal amount; convert it to units before applying Units × 150 × Rate.
   const peopleReturn = buying.reduce((a, x) => a + (x.people_funded ? monthlyReturn(x.people_funded / 165000, x.rate) / 30 * inclusiveDays(x.start_date, x.end_date || today()) : 0), 0);
   const net = gross - peopleReturn;
   const availableCapital = Math.max(0, opening - ownerBuying);
@@ -105,30 +100,8 @@ export default function SecondaryBusiness() {
     const ownerFund = type === 'Buying' ? amount - peopleFund : 0;
     if (!party || units <= 0 || amount <= 0) { setError('Party, units and amount are required.'); setSaving(false); return; }
     if (type === 'Buying' && (peopleFund < 0 || peopleFund > amount)) { setError('People’s Money must be between 0 and the total amount.'); setSaving(false); return; }
-    const { error: rpcError } = await supabase.rpc('create_financial_transaction', {
-      p_type: type,
-      p_party_name: party,
-      p_party_phone: String(f.get('phone') || ''),
-      p_party_address: String(f.get('address') || ''),
-      p_transaction_date: String(f.get('date') || today()),
-      p_due_date: String(f.get('due') || '') || null,
-      p_units: units,
-      p_rate: Number(f.get('rate')) || 0,
-      p_amount: amount,
-      p_owner_funded: ownerFund,
-      p_people_funded: peopleFund,
-      p_note: String(f.get('note') || ''),
-      p_basis: String(f.get('basis') || 'Monthly'),
-      p_start_date: String(f.get('start') || f.get('date') || today()),
-      p_end_date: String(f.get('end') || '') || null,
-    });
-    if (rpcError) {
-      setError(rpcError.message);
-    } else {
-      setModal(null);
-      setNotice(`${type} saved successfully.`);
-      await load();
-    }
+    const { error: rpcError } = await supabase.rpc('create_financial_transaction', { p_type: type, p_party_name: party, p_party_phone: String(f.get('phone') || ''), p_party_address: String(f.get('address') || ''), p_transaction_date: String(f.get('date') || today()), p_due_date: String(f.get('due') || '') || null, p_units: units, p_rate: Number(f.get('rate')) || 0, p_amount: amount, p_owner_funded: ownerFund, p_people_funded: peopleFund, p_note: String(f.get('note') || ''), p_basis: String(f.get('basis') || 'Monthly'), p_start_date: String(f.get('start') || f.get('date') || today()), p_end_date: String(f.get('end') || '') || null });
+    if (rpcError) setError(rpcError.message); else { setModal(null); setNotice(`${type} saved successfully.`); await load(); }
     setSaving(false);
   };
 
@@ -151,14 +124,7 @@ export default function SecondaryBusiness() {
     const amount = Number(f.get('amount')) || 0;
     if (amount <= 0) { setError('Payment amount must be greater than 0.'); setSaving(false); return; }
     const direction = tx.type === 'Selling' && kind === 'principal' ? 'received' : 'paid';
-    const { error: e } = await supabase.rpc('record_financial_payment', {
-      p_transaction_id: tx.id,
-      p_payment_type: kind,
-      p_direction: direction,
-      p_amount: amount,
-      p_payment_date: String(f.get('date') || today()),
-      p_note: String(f.get('note') || ''),
-    });
+    const { error: e } = await supabase.rpc('record_financial_payment', { p_transaction_id: tx.id, p_payment_type: kind, p_direction: direction, p_amount: amount, p_payment_date: String(f.get('date') || today()), p_note: String(f.get('note') || '') });
     if (e) setError(e.message); else { setModal(null); setNotice('Payment saved successfully.'); await load(); }
     setSaving(false);
   };
@@ -192,12 +158,8 @@ export default function SecondaryBusiness() {
         </div></div>
         {error && <div className="panel" style={{ marginBottom: 12, borderColor: 'var(--red)' }}><p style={{ color: 'var(--red)' }}>{error}</p><button className="secondary" onClick={() => setError('')}>Dismiss</button></div>}
         {notice && <div className="panel" style={{ marginBottom: 12, borderColor: 'var(--green)' }}><p style={{ color: 'var(--green)' }}>{notice}</p><button className="secondary" onClick={() => setNotice('')}>Dismiss</button></div>}
-
         {active === 'Dashboard' && <>
-          <div className="metrics">{[
-            ['Opening Capital', opening, 'Owner capital'], ['Owner Capital Used', ownerBuying, 'Buying deployed'], ['Available Capital', availableCapital, 'Not deployed'], ['People’s Money', peopleMoney, 'Linked funding'],
-            ['Total Buying', buyValue, 'Buying turnover'], ['Total Selling', sellValue, 'Selling turnover'], ['Realized Selling Profit', gross, 'FIFO realized profit'], ['Net Profit', net, 'After People’s Money return']
-          ].map(([label, value, sub]) => <div className="metric" key={String(label)}><span>{label}</span><strong>৳{money(Number(value))}</strong><small>{sub}</small></div>)}</div>
+          <div className="metrics">{[['Opening Capital', opening, 'Owner capital'], ['Owner Capital Used', ownerBuying, 'Buying deployed'], ['Available Capital', availableCapital, 'Not deployed'], ['People’s Money', peopleMoney, 'Linked funding'], ['Total Buying', buyValue, 'Buying turnover'], ['Total Selling', sellValue, 'Selling turnover'], ['Realized Selling Profit', gross, 'FIFO realized profit'], ['Net Profit', net, 'After People’s Money return']].map(([label, value, sub]) => <div className="metric" key={String(label)}><span>{label}</span><strong>৳{money(Number(value))}</strong><small>{sub}</small></div>)}</div>
           <div className="grid3">
             <section className="panel"><div className="panelhead"><h2>Buying vs Selling</h2></div><div className="bars"><i className="bar" style={{ height: `${Math.max(5, buyValue / Math.max(buyValue, sellValue, 1) * 100)}%` }} /><i className="bar two" style={{ height: `${Math.max(5, sellValue / Math.max(buyValue, sellValue, 1) * 100)}%` }} /></div><div className="chartlabels"><span>Buying ৳{money(buyValue)}</span><span>Selling ৳{money(sellValue)}</span></div></section>
             <section className="panel"><div className="panelhead"><h2>Capital Utilization</h2></div><div className="metric"><strong>{(ownerBuying / (opening || 1) * 100).toFixed(1)}%</strong><small>Owner capital deployed</small></div><div className="progress"><i style={{ width: `${Math.min(100, ownerBuying / (opening || 1) * 100)}%` }} /></div><p>Available: ৳{money(availableCapital)}</p></section>
@@ -232,14 +194,13 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
 }
 
 function TransactionModal({ mode, parties, saving, onClose, onSave }: { mode: Mode; parties: Party[]; saving: boolean; onClose: () => void; onSave: (form: HTMLFormElement) => void }) {
-  const [party, setParty] = useState('');
   const [units, setUnits] = useState('');
   const [amount, setAmount] = useState('');
   const setU = (v: string) => { setUnits(v); setAmount(v ? String(Number(v) * 165000) : ''); };
   const setA = (v: string) => { setAmount(v); setUnits(v ? String(Number(v) / 165000) : ''); };
   return <Modal title={`New ${mode}`} onClose={onClose}><form className="form" onSubmit={e => { e.preventDefault(); onSave(e.currentTarget); }}>
     <input type="hidden" name="type" value={mode} />
-    <label>Party Name<input name="party" list="party-options" value={party} onChange={e => setParty(e.target.value)} placeholder="Select or type party name" autoComplete="off" required /></label>
+    <label>Party Name<input name="party" list="party-options" placeholder="Select or type party name" autoComplete="off" required /></label>
     <datalist id="party-options">{parties.map(p => <option key={p.id} value={p.name} />)}</datalist>
     <label>Phone<input name="phone" placeholder="Optional" /></label>
     <label>Address<input name="address" placeholder="Optional" /></label>
@@ -253,7 +214,7 @@ function TransactionModal({ mode, parties, saving, onClose, onSave }: { mode: Mo
     <label>End Date<input name="end" type="date" /></label>
     {mode === 'Buying' && <label>People’s Money<input name="peopleFund" type="number" step="0.01" min="0" defaultValue="0" placeholder="0" /></label>}
     <label>Note<input name="note" placeholder="Optional note" /></label>
-    <div style={{ gridColumn: '1/-1' }}><div className="calcbox"><div><span>1 Unit</span><strong>৳165,000</strong></div><div><span>Units</span><strong>{unitsFmt(Number(units) || 0)}</strong></div><div><span>Amount</span><strong>৳{money(Number(amount) || 0)}</strong></div><div><span>Basis</span><strong>Monthly / Daily</strong></div><small>Party stays selected while Units and Amount are edited. Saving uses the secure Supabase financial transaction engine. Selling automatically consumes the oldest available buying lots first.</small></div></div>
+    <div style={{ gridColumn: '1/-1' }}><div className="calcbox"><div><span>1 Unit</span><strong>৳165,000</strong></div><div><span>Units</span><strong>{unitsFmt(Number(units) || 0)}</strong></div><div><span>Amount</span><strong>৳{money(Number(amount) || 0)}</strong></div><div><span>Basis</span><strong>Monthly / Daily</strong></div><small>Party Name is independent from Units and Amount, so changing calculations cannot clear it. Saving uses the secure Supabase financial transaction engine. Selling automatically consumes the oldest available buying lots first.</small></div></div>
     <div style={{ gridColumn: '1/-1', display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button type="button" className="secondary" onClick={onClose}>Cancel</button><button className="primary" disabled={saving}>{saving ? 'Saving…' : `Save ${mode}`}</button></div>
   </form></Modal>;
 }
