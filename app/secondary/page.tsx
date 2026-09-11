@@ -194,14 +194,15 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
 }
 
 function TransactionModal({ mode, parties, saving, onClose, onSave }: { mode: Mode; parties: Party[]; saving: boolean; onClose: () => void; onSave: (form: HTMLFormElement) => void }) {
+  const [party, setParty] = useState('');
   const [units, setUnits] = useState('');
   const [amount, setAmount] = useState('');
   const setU = (v: string) => { setUnits(v); setAmount(v ? String(Number(v) * 165000) : ''); };
   const setA = (v: string) => { setAmount(v); setUnits(v ? String(Number(v) / 165000) : ''); };
   return <Modal title={`New ${mode}`} onClose={onClose}><form className="form" onSubmit={e => { e.preventDefault(); onSave(e.currentTarget); }}>
     <input type="hidden" name="type" value={mode} />
-    <label>Party Name<input name="party" list="party-options" placeholder="Select or type party name" autoComplete="off" required /></label>
-    <datalist id="party-options">{parties.map(p => <option key={p.id} value={p.name} />)}</datalist>
+    <label>Party Name<input name="party" value={party} onChange={e => setParty(e.target.value)} placeholder="Type party name" autoComplete="off" required /></label>
+    <label>Choose Existing Party<select value="" onChange={e => setParty(e.target.value)}><option value="">Select an existing party</option>{parties.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}</select></label>
     <label>Phone<input name="phone" placeholder="Optional" /></label>
     <label>Address<input name="address" placeholder="Optional" /></label>
     <label>Units<input name="units" type="number" step="0.0001" min="0.0001" value={units} onChange={e => setU(e.target.value)} required /></label>
@@ -214,7 +215,7 @@ function TransactionModal({ mode, parties, saving, onClose, onSave }: { mode: Mo
     <label>End Date<input name="end" type="date" /></label>
     {mode === 'Buying' && <label>People’s Money<input name="peopleFund" type="number" step="0.01" min="0" defaultValue="0" placeholder="0" /></label>}
     <label>Note<input name="note" placeholder="Optional note" /></label>
-    <div style={{ gridColumn: '1/-1' }}><div className="calcbox"><div><span>1 Unit</span><strong>৳165,000</strong></div><div><span>Units</span><strong>{unitsFmt(Number(units) || 0)}</strong></div><div><span>Amount</span><strong>৳{money(Number(amount) || 0)}</strong></div><div><span>Basis</span><strong>Monthly / Daily</strong></div><small>Party Name is independent from Units and Amount, so changing calculations cannot clear it. Saving uses the secure Supabase financial transaction engine. Selling automatically consumes the oldest available buying lots first.</small></div></div>
+    <div style={{ gridColumn: '1/-1' }}><div className="calcbox"><div><span>1 Unit</span><strong>৳165,000</strong></div><div><span>Units</span><strong>{unitsFmt(Number(units) || 0)}</strong></div><div><span>Amount</span><strong>৳{money(Number(amount) || 0)}</strong></div><div><span>Basis</span><strong>Monthly / Daily</strong></div><small>Party Name is locked to its own state. Units and Amount calculations cannot modify it. Use the existing-party selector only when you want to replace the typed name.</small></div></div>
     <div style={{ gridColumn: '1/-1', display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button type="button" className="secondary" onClick={onClose}>Cancel</button><button className="primary" disabled={saving}>{saving ? 'Saving…' : `Save ${mode}`}</button></div>
   </form></Modal>;
 }
