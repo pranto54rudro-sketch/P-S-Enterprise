@@ -1,16 +1,16 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
+const money=(n:number)=>`৳${new Intl.NumberFormat('en-BD',{maximumFractionDigits:2}).format(Number(n)||0)}`;
+
 export async function GET() {
-  return NextResponse.json({ ok:true, service:'Master AI', configured:Boolean(process.env.OPENAI_API_KEY), model:process.env.OPENAI_MODEL||'gpt-4o-mini' });
+  return NextResponse.json({ ok:true, service:'Master AI', configured:Boolean(process.env.OPENAI_API_KEY), fallback:true, model:process.env.OPENAI_MODEL||'gpt-4o-mini' });
 }
 
 export async function POST(req: Request) {
   try {
     const {question,history=[]}=await req.json();
     if(!question?.trim()) return NextResponse.json({error:'Question is required.'},{status:400});
-    const key=process.env.OPENAI_API_KEY;
-    if(!key) return NextResponse.json({error:'Master AI is not configured in Production. OPENAI_API_KEY is missing.'},{status:503});
     const supabase=await createClient();
     const [{data:transactions,error},{data:lots},{data:allocations}]=await Promise.all([
       supabase.from('transactions').select('id,type,party_id,transaction_date,units,amount,rate,realized_profit,owner_funded,people_funded,paid,return_paid,due_date,start_date,end_date,note,principal_returned,investor_principal_paid,profit_received,payable_profit_paid,status,status_updated_at').eq('business_code','secondary').order('transaction_date',{ascending:false}).limit(500),
@@ -32,10 +32,25 @@ export async function POST(req: Request) {
     const moneyBackFromSelling=selling.reduce((s:any,x:any)=>s+Number(x.principal_returned||0),0);
     const profitReceived=rows.reduce((s:any,x:any)=>s+Number(x.profit_received||0),0);
     const snapshot={unit_value:165000,base:150,people_money_received:peopleReceived,people_money_used:peopleUsed,people_money_remaining:peopleRemaining,bought_units:boughtUnits,sold_units:soldUnits,available_units:Math.max(0,boughtUnits-soldUnits),people_margin_profit:peopleProfit,owner_earning:ownerIncome,payable_profit_due:payableProfitDue,payable_profit_paid:payableProfitPaid,payable_profit_remaining:Math.max(0,payableProfitDue-payableProfitPaid),people_principal_paid_back:peoplePrincipalPaidBack,money_back_from_selling:moneyBackFromSelling,profit_received:profitReceived,status_counts:rows.reduce((o:any,x:any)=>(o[x.status||'Active']=(o[x.status||'Active']||0)+1,o),{})};
+    const q=question.trim().toLowerCase();
+    const localAnswer=q.includes('payable')||q.includes('due profit')
+      ? `Payable Profit Due: ${money(payableProfitDue)}\nPaid: ${money(payableProfitPaid)}\nRemaining: ${money(Math.max(0,payableProfitDue-payableProfitPaid))}\nDue Buying entries: ${dueBuying.length}.`
+      : q.includes('capital')
+      ? `Owner Capital is tracked separately from People's Money.\n\nPeople's Money remaining: ${money(peopleRemaining)}\nOwner-funded selling: ${money(selling.reduce((s:any,x:any)=>s+Number(x.owner_funded||0),0))}\nOwner earning: ${money(ownerIncome)}\nAvailable inventory: ${snapshot.available_units.toFixed(4)} units.`
+      : q.includes('people')||q.includes('investor')
+      ? `People's Money received: ${money(peopleReceived)}\nUsed in selling: ${money(peopleUsed)}\nRemaining principal: ${money(peopleRemaining)}\nPeople margin profit: ${money(peopleProfit)}\nPrincipal paid back: ${money(peoplePrincipalPaidBack)}.`
+      : q.includes('profit')
+      ? `Profit overview:\nPayable Profit Due: ${money(payableProfitDue)}\nPeople margin profit: ${money(peopleProfit)}\nOwner earning: ${money(ownerIncome)}\nProfit received: ${money(profitReceived)}.`
+      : q.includes('selling')||q.includes('sell')
+      ? `Selling: ${selling.length} entries / ${soldUnits.toFixed(4)} units.\nPeople-funded selling: ${money(peopleUsed)}\nOwner-funded selling: ${money(selling.reduce((s:any,x:any)=>s+Number(x.owner_funded||0),0))}\nRealized FIFO profit: ${money(selling.reduce((s:any,x:any)=>s+Number(x.realized_profit||0),0))}.`
+      : `Master sees ${rows.length} ledger entries (${buying.length} Buying, ${selling.length} Selling).\nPeople's Money: ${money(peopleReceived)} received / ${money(peopleRemaining)} remaining.\nPayable Profit Due: ${money(payableProfitDue)}.\nPeople margin: ${money(peopleProfit)}.\nOwner earning: ${money(ownerIncome)}.`;
+
+    const key=process.env.OPENAI_API_KEY;
+    if(!key) return NextResponse.json({answer:`Master local control engine is active. Cloud AI is not configured yet.\n\n${localAnswer}`,snapshot,mode:'local'});
     const messages=[{role:'system',content:`You are Master, the financial control AI for A P Traders. Use ONLY the supplied Secondary Business ledger and snapshot; never invent figures. Currency ৳. 1 Unit = ৳165,000. Buying is People's Money principal. Selling consumes People's Money first by oldest FIFO, then Owner Capital. Principal is never profit. Monthly earning is units × 150 × rate. People margin profit on People-funded sales is people units × 150 × (selling rate − source buying rate). Owner earning is owner-funded sold units × 150 × selling rate. IMPORTANT: Payable Profit Due is a CALCULATED investor obligation from due Buying entries: units × 150 × buying rate. Payable Profit Paid is the ACTUAL amount paid. Payable Profit Remaining = due minus paid, never confuse these. Also distinguish People principal received, principal remaining, principal paid back, selling money received, profit received, realized FIFO profit, People margin and Owner earning. Status values are Active, Due Soon, Due, Overdue, Partially Cleared, Cleared, Renewed. For month-end questions, use settlement fields and status. Answer in Bangla/Banglish/English matching the user. SNAPSHOT: ${JSON.stringify(snapshot)} LEDGER: ${JSON.stringify(rows)} LOTS: ${JSON.stringify(lots||[])} ALLOCATIONS: ${JSON.stringify(allocations||[])}`},...history.slice(-8).map((m:any)=>({role:m.role==='agent'?'assistant':'user',content:String(m.text||'')})),{role:'user',content:question.trim()}];
     const response=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${key}`},body:JSON.stringify({model:process.env.OPENAI_MODEL||'gpt-4o-mini',messages,temperature:0.1,max_tokens:900})});
     const body=await response.json().catch(()=>({}));
-    if(!response.ok) return NextResponse.json({error:body?.error?.message||`OpenAI request failed (${response.status}).`},{status:502});
-    return NextResponse.json({answer:body.choices?.[0]?.message?.content||'I could not generate an answer.',snapshot});
+    if(!response.ok) return NextResponse.json({answer:`Cloud AI failed, so Master switched to the local financial control engine.\n\n${localAnswer}`,snapshot,mode:'local',error:body?.error?.message||`OpenAI request failed (${response.status}).`});
+    return NextResponse.json({answer:body.choices?.[0]?.message?.content||localAnswer,snapshot,mode:'cloud'});
   } catch(e){console.error('Master AI error',e);return NextResponse.json({error:e instanceof Error?e.message:'Unexpected Master AI error.'},{status:500})}
 }
