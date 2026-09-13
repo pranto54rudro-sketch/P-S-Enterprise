@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 
@@ -18,6 +19,11 @@ type Bridge = {
   selling_revenue: number; people_units_sold: number; people_fifo_cost: number; people_selling_revenue: number;
   people_trading_margin: number; investor_return_accrued_through_sale: number; people_net_profit_after_return: number;
 };
+type Provider = {
+  party_id: string; party: string; buying_transactions: number; units: number; principal: number;
+  principal_paid: number; principal_due: number; return_accrued: number; return_paid: number;
+  return_due: number; total_investor_payable: number;
+};
 
 function Card({ label, value, tone }: { label: string; value: string; tone?: 'green' | 'amber' | 'dark' }) {
   return <div style={{ border: '1px solid #e5e7eb', borderRadius: 16, padding: 18, background: tone === 'dark' ? '#101713' : '#fff' }}>
@@ -30,18 +36,21 @@ export default function PeoplesMoneyPage() {
   const supabase = createClient();
   const [ledger, setLedger] = useState<Ledger[]>([]);
   const [bridge, setBridge] = useState<Bridge[]>([]);
+  const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const load = async () => {
     setError('');
-    const [l, b] = await Promise.all([
+    const [l, b, p] = await Promise.all([
       supabase.from('v_people_money_ledger').select('*').order('transaction_date', { ascending: false }),
       supabase.from('v_people_money_profit_bridge').select('*').order('transaction_date', { ascending: false }),
+      supabase.from('v_people_money_provider_summary').select('*').order('total_investor_payable', { ascending: false }),
     ]);
-    if (l.error || b.error) setError(l.error?.message || b.error?.message || 'Unable to load People’s Money data.');
+    if (l.error || b.error || p.error) setError(l.error?.message || b.error?.message || p.error?.message || 'Unable to load People’s Money data.');
     setLedger((l.data || []).map((x: any) => Object.fromEntries(Object.entries(x).map(([k, v]) => [k, ['units','principal','rate','principal_paid','principal_due','return_paid','return_accrued','return_due','total_investor_payable'].includes(k) ? Number(v) : v])) as Ledger));
     setBridge((b.data || []).map((x: any) => Object.fromEntries(Object.entries(x).map(([k, v]) => [k, ['selling_units','selling_revenue','people_units_sold','people_fifo_cost','people_selling_revenue','people_trading_margin','investor_return_accrued_through_sale','people_net_profit_after_return'].includes(k) ? Number(v) : v])) as Bridge));
+    setProviders((p.data || []).map((x: any) => Object.fromEntries(Object.entries(x).map(([k, v]) => [k, ['buying_transactions','units','principal','principal_paid','principal_due','return_accrued','return_paid','return_due','total_investor_payable'].includes(k) ? Number(v) : v])) as Provider));
     setLoading(false);
   };
 
@@ -68,13 +77,22 @@ export default function PeoplesMoneyPage() {
     netProfit: bridge.reduce((a, x) => a + x.people_net_profit_after_return, 0),
   }), [ledger, bridge]);
 
+  const exportCsv = () => {
+    const rows = [
+      ['Investor', 'Buying Transactions', 'Units', 'Principal', 'Principal Paid', 'Principal Due', 'Return Accrued', 'Return Paid', 'Return Due', 'Total Payable'],
+      ...providers.map(x => [x.party, x.buying_transactions, x.units, x.principal, x.principal_paid, x.principal_due, x.return_accrued, x.return_paid, x.return_due, x.total_investor_payable]),
+    ];
+    const csv = rows.map(r => r.map(v => `"${String(v ?? '').replaceAll('"', '""')}"`).join(',')).join('\n');
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8' })); a.download = `A-P-Traders-Peoples-Money-${today()}.csv`; a.click();
+  };
+
   if (loading) return <main style={{ padding: 32, fontFamily: 'Inter,system-ui,sans-serif' }}>Loading People’s Money ledger…</main>;
 
   return <main style={{ minHeight: '100vh', background: '#f6f7f3', color: '#101713', padding: '30px 34px', fontFamily: 'Inter,system-ui,sans-serif' }}>
     <div style={{ maxWidth: 1400, margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 20, marginBottom: 24 }}>
         <div><div style={{ fontSize: 11, letterSpacing: '.12em', fontWeight: 700, color: '#166534' }}>A P TRADERS · SECONDARY BUSINESS</div><h1 style={{ margin: '6px 0', fontSize: 34 }}>People’s Money</h1><p style={{ margin: 0, color: '#68726c' }}>Investor principal, investor return, trading margin and your actual profit are kept separate.</p></div>
-        <div style={{ fontSize: 12, color: '#68726c' }}>Live · {today()} · Asia/Dhaka</div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><Link href="/secondary" style={{ border: '1px solid #d7ddd8', padding: '9px 12px', borderRadius: 10, textDecoration: 'none', color: '#101713', background: '#fff', fontSize: 12 }}>← Main Business</Link><button onClick={exportCsv} style={{ border: '1px solid #d7ddd8', padding: '9px 12px', borderRadius: 10, background: '#fff', color: '#101713', cursor: 'pointer' }}>⇩ Provider CSV</button><div style={{ fontSize: 12, color: '#68726c' }}>Live · {today()} · Asia/Dhaka</div></div>
       </div>
       {error && <div style={{ marginBottom: 18, padding: 12, borderRadius: 10, background: '#fff1f2', color: '#b42318' }}>{error}</div>}
 
@@ -90,6 +108,11 @@ export default function PeoplesMoneyPage() {
         <Card label="People FIFO Cost" value={money(totals.peopleCost)} />
         <Card label="Trading Margin" value={money(totals.tradingMargin)} tone="green" />
         <Card label="Return Accrued / Paid" value={`${money(totals.returnAccrued)} / ${money(totals.returnPaid)}`} />
+      </section>
+
+      <section style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 16, overflow: 'auto', marginBottom: 22 }}>
+        <div style={{ padding: 18, borderBottom: '1px solid #edf0ed' }}><h2 style={{ margin: 0, fontSize: 18 }}>Investor / Provider Summary</h2><p style={{ margin: '5px 0 0', color: '#68726c', fontSize: 12 }}>One row per People’s Money provider. Principal and return remain separate from business profit.</p></div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}><thead><tr>{['Investor','Buying Txns','Units','Principal','Principal Paid','Principal Due','Return Accrued','Return Paid','Return Due','Total Payable'].map(h=><th key={h} style={{ textAlign: 'left', padding: 12, background: '#f7f8f5', whiteSpace: 'nowrap' }}>{h}</th>)}</tr></thead><tbody>{providers.map(x=><tr key={x.party_id}>{[x.party,x.buying_transactions,units(x.units),`৳${money(x.principal)}`,`৳${money(x.principal_paid)}`,`৳${money(x.principal_due)}`,`৳${money(x.return_accrued)}`,`৳${money(x.return_paid)}`,`৳${money(x.return_due)}`,`৳${money(x.total_investor_payable)}`].map((v,i)=><td key={i} style={{ padding: 12, borderTop: '1px solid #edf0ed', whiteSpace: 'nowrap', fontWeight: i===9 ? 700 : 400 }}>{v}</td>)}</tr>)}</tbody></table>
       </section>
 
       <section style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 16, overflow: 'auto', marginBottom: 22 }}>
