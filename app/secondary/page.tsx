@@ -1,4 +1,4 @@
 'use client';
-import SecondaryBusinessV2 from '@/components/SecondaryBusinessV2';
+import SecondaryBusinessUI from '@/components/SecondaryBusinessUI';
 import SettlementControl from '@/components/SettlementControl';
-export default function SecondaryBusiness(){return <><SecondaryBusinessV2/><SettlementControl/></>;}
+export default function SecondaryBusiness(){return <><SecondaryBusinessUI/><SettlementControl/></>;}
