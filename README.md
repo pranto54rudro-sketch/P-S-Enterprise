@@ -159,6 +159,10 @@ For Vercel or similar deployments, set these environment variables for the targe
 
 Do not commit any service-role or secret key. Only the publishable key is used by the frontend client.
 
+## Deployment note
+
+The repository's current `main` branch intentionally excludes the obsolete `BusinessEnhancements.tsx` implementation that depended on the uninstalled `jspdf` package. Production deployments should build from the latest `main` commit rather than the older failed deployment that referenced that component.
+
 ## Summary
 
 This repository is a production-style accounting and operating dashboard for a vehicle capital business. It centralizes financing rules, party records, transaction tracking, FIFO cost allocation, People’s Money returns, and reporting into a single application.
